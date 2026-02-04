@@ -22,6 +22,16 @@ This script automates the complete installation of Backend.AI on a fresh Ubuntu 
 - Network connectivity for package downloads
 - NVIDIA driver pre-installed (optional - script can auto-install)
 
+### If use tailscale(NAT behind / Firewall)
+- Signup tailscale: https://login.tailscale.com/start
+- Add "linux server": https://login.tailscale.com/admin/machines/new-linux
+
+<img width="619" height="901" alt="image" src="https://github.com/user-attachments/assets/8706de5a-8bb9-44ba-99b8-49ff94142ce0" />
+
+Now you'll get API key starting with `tskey-auth-....`. we'll use as a `tailscale-auth-key` below.
+
+<img width="509" height="204" alt="image" src="https://github.com/user-attachments/assets/87b5e46a-42c7-4cf5-bc23-fc678e4de233" />
+
 ## Quick Start
 
 ### Single Node Installation (All-in-one)
