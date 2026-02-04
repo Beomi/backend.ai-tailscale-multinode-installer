@@ -27,57 +27,44 @@ This script automates the complete installation of Backend.AI on a fresh Ubuntu 
 ### Single Node Installation (All-in-one)
 
 ```bash
-# Clone the repository
-git clone https://github.com/lablup/backend.ai.git
-cd backend.ai
-
-# Run the installer
-sudo ./scripts/install-gpu-vm.sh --mode main
+wget https://raw.githubusercontent.com/Beomi/backend.ai-tailscale-multinode-installer/refs/heads/main/install-gpu-vm.sh
+sudo bash install-gpu-vm.sh
 ```
 
 ### Multi-Node Cluster Setup
 
 **On the main node:**
 ```bash
-sudo ./scripts/install-gpu-vm.sh --mode main
+wget https://raw.githubusercontent.com/Beomi/backend.ai-tailscale-multinode-installer/refs/heads/main/install-gpu-vm.sh
+sudo bash install-gpu-vm.sh
 ```
 
 **On each worker node:**
 ```bash
-sudo ./scripts/install-gpu-vm.sh --mode worker --main-node-ip <MAIN_NODE_IP>
+wget https://raw.githubusercontent.com/Beomi/backend.ai-tailscale-multinode-installer/refs/heads/main/install-gpu-vm.sh
+sudo bash install-gpu-vm.sh --mode worker --main-node-ip <MAIN_NODE_IP>
 ```
 
-### With Tailscale VPN (Recommended for Multi-Node)
+### With Tailscale VPN + With NFS Shared Storage (Recommended for Multi-Node)
 
 **Main node:**
 ```bash
-sudo ./scripts/install-gpu-vm.sh --mode main --tailscale-auth-key tskey-auth-xxxxx
+wget https://raw.githubusercontent.com/Beomi/backend.ai-tailscale-multinode-installer/refs/heads/main/install-gpu-vm.sh
+sudo bash install-gpu-vm.sh --tailscale-auth-key tskey-auth-xxxxx --enable-nfs
 ```
 
 **Worker nodes:**
 ```bash
-sudo ./scripts/install-gpu-vm.sh --mode worker \
+wget https://raw.githubusercontent.com/Beomi/backend.ai-tailscale-multinode-installer/refs/heads/main/install-gpu-vm.sh
+sudo bash install-gpu-vm.sh --mode worker \
     --main-node-ip <TAILSCALE_IP_OF_MAIN> \
-    --tailscale-auth-key tskey-auth-xxxxx
+    --tailscale-auth-key tskey-auth-xxxxx --enable-nfs
 ```
 
-### With NFS Shared Storage
-
-**Main node (NFS server):**
-```bash
-sudo ./scripts/install-gpu-vm.sh --mode main --enable-nfs
-```
-
-**Worker nodes (NFS clients):**
-```bash
-sudo ./scripts/install-gpu-vm.sh --mode worker \
-    --main-node-ip <MAIN_NODE_IP> \
-    --enable-nfs
-```
 
 ## Installation Modes
 
-### Main Node (`--mode main`)
+### Main Node (`--mode main`, default)
 
 Installs the complete Backend.AI stack:
 - PostgreSQL, Redis/Valkey, etcd, MinIO (via Docker Compose)
@@ -110,7 +97,7 @@ Installs only the Backend.AI Agent:
 
 | Option | Description |
 |--------|-------------|
-| `--enable-nfs` | Enable NFS shared storage for vfolders |
+| `--enable-nfs` | Enable Auto NFS shared storage for vfolders |
 | `--nfs-server HOST` | Use external NFS server instead of main node |
 | `--nfs-export-path PATH` | NFS export/mount path |
 | `--nfs-mount-options OPTS` | NFS client mount options (default: `rw,hard,intr`) |
