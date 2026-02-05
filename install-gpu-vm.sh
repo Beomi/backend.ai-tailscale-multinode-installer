@@ -1538,6 +1538,22 @@ clone_repository() {
 }
 NVCR_EOF
 
+    # Create Docker Hub (index.docker.io) container registry fixture
+    show_info "Creating Docker Hub registry fixture..."
+    cat > "${INSTALL_PATH}/backend.ai/fixtures/manager/example-container-registries-dockerhub.json" << 'DOCKERHUB_EOF'
+{
+    "container_registries": [
+        {
+            "id": "b2c3d4e5-6789-01ab-cdef-234567890abc",
+            "registry_name": "index.docker.io",
+            "url": "https://index.docker.io",
+            "type": "docker",
+            "project": "junbumlee"
+        }
+    ]
+}
+DOCKERHUB_EOF
+
     show_info "Repository ready at $INSTALL_PATH/backend.ai"
 }
 
@@ -2003,8 +2019,6 @@ initialize_database() {
     show_info "Populating database fixtures..."
     ./backend.ai mgr fixture populate fixtures/manager/example-container-registries-harbor.json || show_warning "Container registries fixture may already exist"
     ./backend.ai mgr fixture populate fixtures/manager/example-container-registries-nvcr.json || show_warning "NVIDIA NGC registry fixture may already exist"
-    # Modify Docker Hub fixture to use junbumlee project for our custom image
-    sed -i 's/"project": "library"/"project": "junbumlee"/' fixtures/manager/example-container-registries-dockerhub.json
     ./backend.ai mgr fixture populate fixtures/manager/example-container-registries-dockerhub.json || show_warning "Docker Hub registry fixture may already exist"
     ./backend.ai mgr fixture populate fixtures/manager/example-users.json || show_warning "Users fixture may already exist"
     ./backend.ai mgr fixture populate fixtures/manager/example-keypairs.json || show_warning "Keypairs fixture may already exist"
