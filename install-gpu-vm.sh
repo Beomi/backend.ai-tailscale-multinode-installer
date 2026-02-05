@@ -1464,27 +1464,21 @@ clone_repository() {
     # Pull LFS files
     git lfs pull
 
-    # Add NVIDIA NGC (nvcr.io) to container registries fixture
-    show_info "Adding NVIDIA NGC registry to fixtures..."
-    python3 -c "
-import json
-fixture_path = '$INSTALL_PATH/backend.ai/fixtures/manager/example-container-registries-harbor.json'
-with open(fixture_path, 'r') as f:
-    data = json.load(f)
-nvcr_entry = {
-    'id': 'a1b2c3d4-5678-90ab-cdef-1234567890ab',
-    'registry_name': 'nvcr.io',
-    'url': 'https://nvcr.io',
-    'type': 'docker',
-    'project': 'nvidia',
-    'is_global': True
+    # Create NVIDIA NGC (nvcr.io) container registry fixture
+    show_info "Creating NVIDIA NGC registry fixture..."
+    cat > "${INSTALL_PATH}/backend.ai/fixtures/manager/example-container-registries-nvcr.json" << 'NVCR_EOF'
+{
+    "container_registries": [
+        {
+            "id": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
+            "registry_name": "nvcr.io",
+            "url": "https://nvcr.io",
+            "type": "docker",
+            "project": "nvidia"
+        }
+    ]
 }
-# Add if not already present
-if not any(r.get('registry_name') == 'nvcr.io' for r in data.get('container_registries', [])):
-    data['container_registries'].append(nvcr_entry)
-    with open(fixture_path, 'w') as f:
-        json.dump(data, f, indent=4)
-"
+NVCR_EOF
 
     show_info "Repository ready at $INSTALL_PATH/backend.ai"
 }
@@ -1924,6 +1918,7 @@ initialize_database() {
     # Populate fixtures
     show_info "Populating database fixtures..."
     ./backend.ai mgr fixture populate fixtures/manager/example-container-registries-harbor.json || show_warning "Container registries fixture may already exist"
+    ./backend.ai mgr fixture populate fixtures/manager/example-container-registries-nvcr.json || show_warning "NVIDIA NGC registry fixture may already exist"
     ./backend.ai mgr fixture populate fixtures/manager/example-users.json || show_warning "Users fixture may already exist"
     ./backend.ai mgr fixture populate fixtures/manager/example-keypairs.json || show_warning "Keypairs fixture may already exist"
     ./backend.ai mgr fixture populate fixtures/manager/example-set-user-main-access-keys.json || show_warning "Access keys fixture may already exist"
