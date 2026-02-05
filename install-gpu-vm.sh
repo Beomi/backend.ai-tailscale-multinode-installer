@@ -1955,6 +1955,7 @@ initialize_database() {
     show_info "Populating database fixtures..."
     ./backend.ai mgr fixture populate fixtures/manager/example-container-registries-harbor.json || show_warning "Container registries fixture may already exist"
     ./backend.ai mgr fixture populate fixtures/manager/example-container-registries-nvcr.json || show_warning "NVIDIA NGC registry fixture may already exist"
+    ./backend.ai mgr fixture populate fixtures/manager/example-container-registries-dockerhub.json || show_warning "Docker Hub registry fixture may already exist"
     ./backend.ai mgr fixture populate fixtures/manager/example-users.json || show_warning "Users fixture may already exist"
     ./backend.ai mgr fixture populate fixtures/manager/example-keypairs.json || show_warning "Keypairs fixture may already exist"
     ./backend.ai mgr fixture populate fixtures/manager/example-set-user-main-access-keys.json || show_warning "Access keys fixture may already exist"
@@ -2062,12 +2063,12 @@ scan_image_registry() {
 
     ./backend.ai mgr image rescan cr.backend.ai
 
-    # Rescan NVIDIA NGC registry for PyTorch image
-    ./backend.ai mgr image rescan nvcr.io -t nvidia/pytorch:25.05-py3 || show_warning "NGC image rescan failed (registry may not be accessible)"
+    # Rescan Docker Hub registry for PyTorch image
+    ./backend.ai mgr image rescan index.docker.io -t junbumlee/bai-ngc-pytorch:25.05-pytorch2.8-py312-cuda12.9 || show_warning "Docker Hub image rescan failed (registry may not be accessible)"
 
     # Set up default image alias based on architecture
     if [[ "$ARCH" == "aarch64" ]]; then
-        ./backend.ai mgr image alias python "cr.backend.ai/multiarch/python:3.9-ubuntu20.04" aarch64
+        show_warning "No aarch64 image alias configured yet"
     else
         ./backend.ai mgr image alias python "cr.backend.ai/stable/python:3.9-ubuntu20.04" x86_64
     fi
@@ -2356,13 +2357,11 @@ pull_kernel_images() {
     show_info "Pulling default kernel images..."
 
     if [[ "$ARCH" == "aarch64" ]]; then
-        # docker pull "cr.backend.ai/multiarch/python:3.9-ubuntu20.04" || true
-        docker pull "nvcr.io/nvidia/pytorch:25.05-py3" || true
+        show_error "No aarch64 kernel image available yet. Use --skip-image-pull to skip."
+        exit 1
     else
-        # docker pull "cr.backend.ai/stable/python:3.9-ubuntu20.04" || true
-        # Pull a GPU-enabled image for testing
-        # docker pull "cr.backend.ai/stable/python-pytorch:2.0-py311-cuda12.1" || true
-        docker pull "nvcr.io/nvidia/pytorch:25.05-py3" || true
+        # Pull Backend.AI compatible PyTorch image from Docker Hub
+        docker pull "junbumlee/bai-ngc-pytorch:25.05-pytorch2.8-py312-cuda12.9" || true
     fi
 
     show_info "Kernel images pulled"
