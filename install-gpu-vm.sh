@@ -1539,18 +1539,16 @@ clone_repository() {
 NVCR_EOF
 
     # Create Docker Hub container registry fixture
-    # Note: We use "dockerhub" as registry_name instead of "index.docker.io" because
+    # Note: We use "registry-1.docker.io" as registry_name instead of "index.docker.io" because
     # Docker strips the "index.docker.io" prefix when storing images locally.
-    # This causes a mismatch between DB canonical names and local image names.
-    # By using "dockerhub", we can manually tag pulled images with this prefix
-    # so they match the DB and show as "downloaded" in the UI.
+    # However, Docker preserves "registry-1.docker.io" prefix, so images show as "downloaded" in UI.
     show_info "Creating Docker Hub registry fixture..."
     cat > "${INSTALL_PATH}/backend.ai/fixtures/manager/example-container-registries-dockerhub.json" << 'DOCKERHUB_EOF'
 {
     "container_registries": [
         {
             "id": "b2c3d4e5-6789-01ab-cdef-234567890abc",
-            "registry_name": "dockerhub",
+            "registry_name": "registry-1.docker.io",
             "url": "https://registry-1.docker.io",
             "type": "docker",
             "project": "junbumlee"
@@ -2133,8 +2131,8 @@ scan_image_registry() {
     ./backend.ai mgr image rescan cr.backend.ai
 
     # Rescan Docker Hub registry for PyTorch image
-    # Note: We use "dockerhub" as registry name (not index.docker.io) to match our custom registry config
-    ./backend.ai mgr image rescan "dockerhub/junbumlee/bai-ngc-pytorch:25.05-pytorch2.8-py312-cuda12.9" || show_warning "Docker Hub image rescan failed (registry may not be accessible)"
+    # Note: We use "registry-1.docker.io" (not index.docker.io) because Docker preserves this prefix
+    ./backend.ai mgr image rescan "registry-1.docker.io/junbumlee/bai-ngc-pytorch:25.05-pytorch2.8-py312-cuda12.9" || show_warning "Docker Hub image rescan failed (registry may not be accessible)"
 
     # Set up default image alias based on architecture
     if [[ "$ARCH" == "aarch64" ]]; then
@@ -2431,16 +2429,10 @@ pull_kernel_images() {
         exit 1
     else
         # Pull Backend.AI compatible PyTorch image from Docker Hub
-        local IMAGE_NAME="junbumlee/bai-ngc-pytorch"
-        local IMAGE_TAG="25.05-pytorch2.8-py312-cuda12.9"
-
-        docker pull "${IMAGE_NAME}:${IMAGE_TAG}" || true
-
-        # Tag with custom "dockerhub" prefix to match Backend.AI registry config
-        # Docker strips "index.docker.io" prefix, so we use "dockerhub" as a workaround
-        # This allows the image to show as "downloaded" in the Backend.AI UI
-        show_info "Tagging image with dockerhub prefix..."
-        docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "dockerhub/${IMAGE_NAME}:${IMAGE_TAG}" || true
+        # Note: We use "registry-1.docker.io" instead of "index.docker.io" because Docker
+        # preserves this prefix (unlike index.docker.io which gets stripped).
+        # This ensures the image shows as "downloaded" in the Backend.AI UI.
+        docker pull "registry-1.docker.io/junbumlee/bai-ngc-pytorch:25.05-pytorch2.8-py312-cuda12.9" || true
     fi
 
     show_info "Kernel images pulled"
