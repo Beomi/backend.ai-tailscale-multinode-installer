@@ -146,6 +146,16 @@ get_local_ip() {
     echo "$ip"
 }
 
+generate_agent_id() {
+    # Generate a unique agent ID using hostname + random 4-char suffix
+    # This prevents conflicts when multiple nodes have the same hostname (e.g., "ubuntu")
+    local hostname_short
+    hostname_short=$(hostname -s)
+    local random_suffix
+    random_suffix=$(tr -dc 'a-z' < /dev/urandom | head -c 4)
+    echo "i_${hostname_short}_${random_suffix}"
+}
+
 usage() {
     echo "${GREEN}Backend.AI GPU VM Auto-Installer (Multi-Node Support)${NC}"
     echo ""
@@ -1695,6 +1705,19 @@ configure_agent() {
     # Copy halfstack config as base
     cp configs/agent/halfstack.toml agent.toml
 
+    # Generate unique agent ID to avoid conflicts when multiple nodes have the same hostname
+    local agent_id
+    agent_id=$(generate_agent_id)
+    show_info "Using agent ID: ${agent_id}"
+    # Set agent ID in the [agent] section (add after [agent] line if id is commented or missing)
+    if grep -q "^# id = " agent.toml; then
+        sed -i "s/^# id = .*/id = \"${agent_id}\"/" agent.toml
+    elif grep -q "^id = " agent.toml; then
+        sed -i "s/^id = .*/id = \"${agent_id}\"/" agent.toml
+    else
+        sed -i "/^\[agent\]/a id = \"${agent_id}\"" agent.toml
+    fi
+
     # Update configuration for GPU support
     sed -i "s/port = 8120/port = ${ETCD_PORT}/" agent.toml
     sed -i "s/port = 6001/port = ${AGENT_RPC_PORT}/" agent.toml
@@ -1734,6 +1757,19 @@ configure_worker_agent() {
 
     # Copy halfstack config as base
     cp configs/agent/halfstack.toml agent.toml
+
+    # Generate unique agent ID to avoid conflicts when multiple nodes have the same hostname
+    local agent_id
+    agent_id=$(generate_agent_id)
+    show_info "Using agent ID: ${agent_id}"
+    # Set agent ID in the [agent] section (add after [agent] line if id is commented or missing)
+    if grep -q "^# id = " agent.toml; then
+        sed -i "s/^# id = .*/id = \"${agent_id}\"/" agent.toml
+    elif grep -q "^id = " agent.toml; then
+        sed -i "s/^id = .*/id = \"${agent_id}\"/" agent.toml
+    else
+        sed -i "/^\[agent\]/a id = \"${agent_id}\"" agent.toml
+    fi
 
     # Point to main node's etcd
     sed -i "s/host = \"127.0.0.1\", port = 8120/host = \"${MAIN_NODE_IP}\", port = ${ETCD_PORT}/" agent.toml
