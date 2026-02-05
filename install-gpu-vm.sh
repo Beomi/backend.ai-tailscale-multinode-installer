@@ -2754,20 +2754,23 @@ main() {
         initialize_database
         initialize_appproxy_database
         setup_vfolders
+
+        # Phase 9: Pull Kernel Images (before rescan)
+        show_step "Phase 9: Kernel Images"
+        pull_kernel_images
         scan_image_registry
 
-        # Phase 9: CUDA Plugin Setup
-        show_step "Phase 9: CUDA Plugin Setup"
+        # Phase 10: CUDA Plugin Setup
+        show_step "Phase 10: CUDA Plugin Setup"
         setup_cuda_plugin
 
-        # Phase 10: Systemd Services
-        show_step "Phase 10: Systemd Services"
+        # Phase 11: Systemd Services
+        show_step "Phase 11: Systemd Services"
         create_systemd_services
 
-        # Phase 11: Final Setup
-        show_step "Phase 11: Final Setup"
+        # Phase 12: Final Setup
+        show_step "Phase 12: Final Setup"
         create_client_env_scripts
-        pull_kernel_images
     else
         # Worker Node Only: NFS Shared Storage (if enabled)
         if [[ $NFS_ENABLED -eq 1 ]]; then
