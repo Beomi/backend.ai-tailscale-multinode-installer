@@ -24,6 +24,13 @@ set -e
 shopt -s xpg_echo
 
 #######################################
+# Non-interactive mode configuration
+#######################################
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+
+#######################################
 # Color definitions
 #######################################
 RED="\033[0;91m"
@@ -99,6 +106,18 @@ LOCAL_IP=""
 #######################################
 # Helper functions
 #######################################
+
+# Non-interactive apt-get wrapper
+apt_install() {
+    apt-get install -y \
+        -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold" \
+        "$@"
+}
+
+apt_update() {
+    apt-get update -qq
+}
 
 show_error() {
     echo "${RED}[ERROR]${NC} ${LRED}$1${NC}" >&2
@@ -505,6 +524,30 @@ update_local_ip_for_tailscale() {
 # Phase 1: System Prerequisites
 #######################################
 
+configure_noninteractive() {
+    show_info "Configuring non-interactive mode..."
+
+    # Disable needrestart interactive prompts
+    if [[ -d /etc/needrestart/conf.d ]]; then
+        cat > /etc/needrestart/conf.d/99-backendai.conf << 'EOF'
+# Disable interactive restarts during Backend.AI installation
+$nrconf{restart} = 'a';
+$nrconf{kernelhints} = 0;
+EOF
+    fi
+
+    # Pre-configure any packages that might prompt
+    # Prevent grub from prompting during kernel updates
+    echo 'grub-pc grub-pc/install_devices_empty boolean true' | debconf-set-selections 2>/dev/null || true
+    echo 'grub-pc grub-pc/install_devices string /dev/sda' | debconf-set-selections 2>/dev/null || true
+
+    # Prevent keyboard-configuration from prompting
+    echo 'keyboard-configuration keyboard-configuration/layoutcode string us' | debconf-set-selections 2>/dev/null || true
+    echo 'keyboard-configuration keyboard-configuration/layout select English (US)' | debconf-set-selections 2>/dev/null || true
+
+    show_info "Non-interactive mode configured"
+}
+
 check_ubuntu_version() {
     show_info "Checking Ubuntu version..."
 
@@ -537,8 +580,8 @@ install_nvidia_driver() {
     show_info "Installing NVIDIA driver..."
 
     # Install ubuntu-drivers utility if not present
-    apt-get update
-    apt-get install -y ubuntu-drivers-common
+    apt_update
+    apt_install ubuntu-drivers-common
 
     # Auto-detect and show available drivers
     show_info "Detecting available NVIDIA drivers..."
@@ -548,9 +591,13 @@ install_nvidia_driver() {
     # Note: --gpgpu flag uses different (often older) selection logic for server drivers,
     # so we use standard install which respects the "recommended" flag from ubuntu-drivers devices
     show_info "Installing recommended NVIDIA driver..."
-    if ! ubuntu-drivers install; then
-        show_warning "Standard driver installation failed, trying GPGPU install..."
-        ubuntu-drivers install --gpgpu
+    # Use --no-oem to skip OEM driver prompts in non-interactive mode
+    if ! ubuntu-drivers install --no-oem 2>/dev/null; then
+        # Fallback without --no-oem for older ubuntu-drivers versions
+        if ! ubuntu-drivers install 2>/dev/null; then
+            show_warning "Standard driver installation failed, trying GPGPU install..."
+            ubuntu-drivers install --gpgpu
+        fi
     fi
 
     # Try to load the nvidia kernel modules dynamically
@@ -612,8 +659,8 @@ detect_architecture() {
 install_system_packages() {
     show_info "Installing system packages..."
 
-    apt-get update
-    apt-get install -y \
+    apt_update
+    apt_install \
         git \
         git-lfs \
         jq \
@@ -681,9 +728,9 @@ install_valkey() {
     show_info "Adding Valkey repository..."
     if curl -fsSL https://packages.valkey.io/gpg 2>/dev/null | gpg --dearmor -o /usr/share/keyrings/valkey-archive-keyring.gpg 2>/dev/null; then
         echo "deb [signed-by=/usr/share/keyrings/valkey-archive-keyring.gpg] https://packages.valkey.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/valkey.list > /dev/null
-        apt-get update
+        apt_update
 
-        if apt-get install -y valkey 2>/dev/null; then
+        if apt_install valkey 2>/dev/null; then
             show_info "Valkey installed successfully"
             configure_valkey_port "valkey"
             return 0
@@ -692,8 +739,8 @@ install_valkey() {
 
     # Fallback to Redis if Valkey installation fails
     show_warning "Valkey installation failed, falling back to Redis..."
-    apt-get update
-    apt-get install -y redis-server
+    apt_update
+    apt_install redis-server
 
     if command -v redis-server &> /dev/null; then
         show_info "Redis installed successfully"
@@ -824,8 +871,8 @@ install_docker() {
             $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
             tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-        apt-get update
-        apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        apt_update
+        apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     fi
 
     # Enable and start Docker
@@ -986,8 +1033,8 @@ setup_nfs_server() {
     show_info "Setting up NFS server on main node..."
 
     # Install NFS server packages
-    apt-get update
-    apt-get install -y nfs-kernel-server nfs-common
+    apt_update
+    apt_install nfs-kernel-server nfs-common
 
     # Set default export path
     if [[ -z "$NFS_EXPORT_PATH" ]]; then
@@ -1043,8 +1090,8 @@ setup_nfs_client() {
     fi
 
     show_info "Installing NFS client packages..."
-    apt-get update
-    apt-get install -y nfs-common
+    apt_update
+    apt_install nfs-common
 }
 
 mount_nfs_storage() {
@@ -1225,12 +1272,12 @@ install_cuda_toolkit() {
             return 1
         fi
 
-        apt-get update
+        apt_update
     fi
 
     # Install the CUDA toolkit
     show_info "Installing $cuda_package (this may take a while)..."
-    if ! apt-get install -y "$cuda_package"; then
+    if ! apt_install "$cuda_package"; then
         show_error "Failed to install $cuda_package"
         return 1
     fi
@@ -1295,8 +1342,8 @@ install_nvidia_container_toolkit() {
             sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
             tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 
-        apt-get update
-        apt-get install -y nvidia-container-toolkit
+        apt_update
+        apt_install nvidia-container-toolkit
     fi
 
     # Configure Docker to use NVIDIA runtime
@@ -1328,7 +1375,8 @@ install_uv() {
     if command -v uv &> /dev/null; then
         show_info "uv already installed: $(uv --version)"
     else
-        curl -LsSf https://astral.sh/uv/install.sh | sh
+        # UV_UNMANAGED_INSTALL prevents prompts
+        curl -LsSf https://astral.sh/uv/install.sh | UV_UNMANAGED_INSTALL=1 sh
 
         # Source the environment
         if [[ -f "$HOME/.local/bin/env" ]]; then
@@ -1358,8 +1406,8 @@ install_pyenv() {
     else
         # Fresh installation needed
         # Install pyenv dependencies
-        apt-get update
-        apt-get install -y \
+        apt_update
+        apt_install \
             build-essential \
             libssl-dev \
             zlib1g-dev \
@@ -1374,8 +1422,8 @@ install_pyenv() {
             libffi-dev \
             liblzma-dev
 
-        # Install pyenv
-        curl https://pyenv.run | bash
+        # Install pyenv (non-interactive)
+        curl -fsSL https://pyenv.run | bash
 
         # Initialize pyenv
         eval "$(pyenv init -)"
@@ -2616,6 +2664,9 @@ main() {
 
     # Check if running as root
     check_root
+
+    # Configure non-interactive mode before any apt operations
+    configure_noninteractive
 
     # Tailscale Setup (if auth key provided) - install early so etcd check can use Tailscale network
     if [[ -n "$TAILSCALE_AUTH_KEY" ]]; then
