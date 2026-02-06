@@ -1964,8 +1964,8 @@ configure_appproxy() {
     sed -i "s/jwt_secret = \"some_jwt_secret\"/jwt_secret = \"${APPPROXY_JWT_SECRET}\"/" app-proxy-coordinator.toml
     sed -i "s/secret = \"some_permit_hash_secret\"/secret = \"${APPPROXY_PERMIT_HASH_SECRET}\"/" app-proxy-coordinator.toml
 
-    # Set advertised_addr to LOCAL_IP so browsers can reach the app-proxy
-    sed -i '/\[proxy_coordinator\.advertised_addr\]/,/^host = /{s/host = "127.0.0.1"/host = "'"${LOCAL_IP}"'"/}' app-proxy-coordinator.toml
+    # Set advertised_addr to LOCAL_IP so browsers can reach the app-proxy coordinator
+    sed -i '/\[proxy_coordinator\.advertised_addr\]/,/^$/{s/host = "127.0.0.1"/host = "'"${LOCAL_IP}"'"/}' app-proxy-coordinator.toml
 
     # Copy alembic config for app-proxy
     cp configs/app-proxy-coordinator/halfstack.alembic.ini alembic-appproxy.ini
@@ -1978,6 +1978,12 @@ configure_appproxy() {
     sed -i "s/api_secret = \"some_api_secret\"/api_secret = \"${APPPROXY_API_SECRET}\"/" app-proxy-worker.toml
     sed -i "s/jwt_secret = \"some_jwt_secret\"/jwt_secret = \"${APPPROXY_JWT_SECRET}\"/" app-proxy-worker.toml
     sed -i "s/secret = \"some_permit_hash_secret\"/secret = \"${APPPROXY_PERMIT_HASH_SECRET}\"/" app-proxy-worker.toml
+
+    # Set coordinator_endpoint, api_advertised_addr, and advertised_host to LOCAL_IP
+    # so browsers and the worker can reach the correct addresses
+    sed -i "s|coordinator_endpoint = \"http://127.0.0.1:${APPPROXY_COORDINATOR_PORT}\"|coordinator_endpoint = \"http://${LOCAL_IP}:${APPPROXY_COORDINATOR_PORT}\"|" app-proxy-worker.toml
+    sed -i "s/api_advertised_addr = { host = \"127.0.0.1\"/api_advertised_addr = { host = \"${LOCAL_IP}\"/" app-proxy-worker.toml
+    sed -i "s/advertised_host = \"127.0.0.1\"/advertised_host = \"${LOCAL_IP}\"/" app-proxy-worker.toml
 
     show_info "App-proxy configurations generated"
 }
