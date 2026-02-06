@@ -2086,7 +2086,7 @@ initialize_appproxy_database() {
     docker exec -e PGPASSWORD=develove "$POSTGRES_CONTAINER" psql -U postgres -d backend -c "
         UPDATE scaling_groups SET
         wsproxy_api_token = '${APPPROXY_API_SECRET}',
-        wsproxy_addr = 'http://localhost:${APPPROXY_COORDINATOR_PORT}'
+        wsproxy_addr = 'http://${LOCAL_IP}:${APPPROXY_COORDINATOR_PORT}'
         WHERE name = 'default';"
 
     show_info "App-proxy database initialized"
