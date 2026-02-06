@@ -84,6 +84,9 @@ INSTALL_MODE="main"           # 'main' or 'worker'
 MAIN_NODE_IP=""               # Required for worker mode
 SKIP_AGENT=0                  # For main node without local agent
 
+# Docker Swarm configuration
+SWARM_TOKEN=""                # Swarm join token (required for worker mode)
+
 # Tailscale configuration
 TAILSCALE_AUTH_KEY=""         # Auth key for Tailscale
 TAILSCALE_IP=""               # Will be populated after Tailscale connects
@@ -196,6 +199,10 @@ usage() {
     echo "  ${LWHITE}--skip-agent${NC}"
     echo "    Skip agent installation on main node (main mode only)"
     echo ""
+    echo "  ${LWHITE}--swarm-token TOKEN${NC}"
+    echo "    Docker Swarm join token (required for worker mode)"
+    echo "    Get from main node: docker swarm join-token -q worker"
+    echo ""
     echo "  ${LWHITE}--tailscale-auth-key KEY${NC}"
     echo "    Tailscale auth key for automatic VPN mesh networking"
     echo "    Nodes will use Tailscale IPs for all communication"
@@ -258,7 +265,7 @@ usage() {
     echo "  sudo $SCRIPT_NAME --mode main"
     echo ""
     echo "  # Install worker node connecting to main at 192.168.1.100"
-    echo "  sudo $SCRIPT_NAME --mode worker --main-node-ip 192.168.1.100"
+    echo "  sudo $SCRIPT_NAME --mode worker --main-node-ip 192.168.1.100 --swarm-token <TOKEN>"
     echo ""
     echo "  # Install main node without local agent"
     echo "  sudo $SCRIPT_NAME --mode main --skip-agent"
@@ -267,7 +274,7 @@ usage() {
     echo "  sudo $SCRIPT_NAME --mode main --tailscale-auth-key tskey-auth-xxxxx"
     echo ""
     echo "  # Install worker node with Tailscale (use main node's Tailscale IP)"
-    echo "  sudo $SCRIPT_NAME --mode worker --main-node-ip 100.64.0.1 --tailscale-auth-key tskey-auth-xxxxx"
+    echo "  sudo $SCRIPT_NAME --mode worker --main-node-ip 100.64.0.1 --swarm-token <TOKEN> --tailscale-auth-key tskey-auth-xxxxx"
     echo ""
     echo "  # Install to custom path with custom ports"
     echo "  sudo $SCRIPT_NAME --install-path /home/bai/backend.ai --manager-port 9091"
@@ -276,16 +283,16 @@ usage() {
     echo "  sudo $SCRIPT_NAME --mode main --enable-nfs"
     echo ""
     echo "  # Worker with NFS (mounts from main node)"
-    echo "  sudo $SCRIPT_NAME --mode worker --main-node-ip 192.168.1.100 --enable-nfs"
+    echo "  sudo $SCRIPT_NAME --mode worker --main-node-ip 192.168.1.100 --swarm-token <TOKEN> --enable-nfs"
     echo ""
     echo "  # With Tailscale + NFS (recommended for multi-node)"
     echo "  sudo $SCRIPT_NAME --mode main --tailscale-auth-key tskey-auth-xxxxx --enable-nfs"
     echo ""
     echo "  # Worker with Tailscale + NFS"
-    echo "  sudo $SCRIPT_NAME --mode worker --main-node-ip 100.64.0.1 --tailscale-auth-key tskey-auth-xxxxx --enable-nfs"
+    echo "  sudo $SCRIPT_NAME --mode worker --main-node-ip 100.64.0.1 --swarm-token <TOKEN> --tailscale-auth-key tskey-auth-xxxxx --enable-nfs"
     echo ""
     echo "  # Worker with external NFS server"
-    echo "  sudo $SCRIPT_NAME --mode worker --main-node-ip 192.168.1.100 --nfs-server 192.168.1.50 --nfs-export-path /exports/backendai"
+    echo "  sudo $SCRIPT_NAME --mode worker --main-node-ip 192.168.1.100 --swarm-token <TOKEN> --nfs-server 192.168.1.50 --nfs-export-path /exports/backendai"
     echo ""
     echo "${LWHITE}ARCHITECTURE${NC}"
     echo ""
@@ -415,6 +422,14 @@ parse_args() {
                 GIT_BRANCH="${1#*=}"
                 shift
                 ;;
+            --swarm-token)
+                SWARM_TOKEN="$2"
+                shift 2
+                ;;
+            --swarm-token=*)
+                SWARM_TOKEN="${1#*=}"
+                shift
+                ;;
             --tailscale-auth-key)
                 TAILSCALE_AUTH_KEY="$2"
                 shift 2
@@ -486,6 +501,12 @@ validate_mode() {
     if [[ "$INSTALL_MODE" == "worker" ]]; then
         if [[ -z "$MAIN_NODE_IP" ]]; then
             show_error "--main-node-ip is required for worker mode"
+            exit 1
+        fi
+
+        if [[ -z "$SWARM_TOKEN" ]]; then
+            show_error "--swarm-token is required for worker mode"
+            show_error "Get the token on the main node with: docker swarm join-token -q worker"
             exit 1
         fi
 
@@ -955,20 +976,23 @@ install_tailscale() {
 
 setup_docker_swarm() {
     # Docker Swarm is required for multi-node sessions (overlay networks)
-    if [[ -z "$TAILSCALE_AUTH_KEY" ]]; then
-        return 0
-    fi
-
     if [[ "$INSTALL_MODE" == "main" ]]; then
         # Check if already in swarm mode
         if docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null | grep -q "active"; then
             show_info "Docker Swarm already initialized"
         else
             show_info "Initializing Docker Swarm for multi-node overlay networks..."
-            docker swarm init --advertise-addr "${LOCAL_IP}" || {
-                show_error "Failed to initialize Docker Swarm"
-                return 1
-            }
+            if [[ -n "$TAILSCALE_IP" ]]; then
+                docker swarm init --advertise-addr "${TAILSCALE_IP}" || {
+                    show_error "Failed to initialize Docker Swarm"
+                    return 1
+                }
+            else
+                docker swarm init || {
+                    show_error "Failed to initialize Docker Swarm"
+                    return 1
+                }
+            fi
             show_info "Docker Swarm initialized on main node"
         fi
 
@@ -998,13 +1022,17 @@ setup_docker_swarm() {
             return 0
         fi
 
-        # Try to join the swarm on the main node
+        # Join the swarm on the main node
+        if [[ -z "$SWARM_TOKEN" ]]; then
+            show_error "--swarm-token is required for worker mode to join Docker Swarm"
+            show_error "Get the token on the main node with: docker swarm join-token -q worker"
+            return 1
+        fi
+
         show_info "Joining Docker Swarm on main node ${MAIN_NODE_IP}..."
-        docker swarm join --token "$(ssh -o StrictHostKeyChecking=no "${MAIN_NODE_IP}" cat "${INSTALL_PATH}/swarm-worker-token" 2>/dev/null)" "${MAIN_NODE_IP}:2377" 2>/dev/null || {
-            show_warning "Could not auto-join Docker Swarm. Please manually join with:"
-            show_warning "  docker swarm join --token <TOKEN> ${MAIN_NODE_IP}:2377"
-            show_warning "Get the token on the main node with: docker swarm join-token worker"
-            return 0
+        docker swarm join --token "${SWARM_TOKEN}" "${MAIN_NODE_IP}:2377" || {
+            show_error "Failed to join Docker Swarm on ${MAIN_NODE_IP}:2377"
+            return 1
         }
         show_info "Joined Docker Swarm successfully"
     fi
@@ -2614,36 +2642,42 @@ show_summary_main() {
     echo "${LCYAN}  Worker Node Setup Instructions${NC}"
     echo "${LCYAN}========================================${NC}"
     echo ""
+    # Read swarm token for display
+    local swarm_token
+    swarm_token=$(cat "${INSTALL_PATH}/swarm-worker-token" 2>/dev/null || docker swarm join-token -q worker 2>/dev/null || echo "<TOKEN>")
+
     echo "To add worker nodes to this cluster, run on each worker:"
     echo ""
     if [[ -n "$TAILSCALE_IP" ]] && [[ $NFS_ENABLED -eq 1 ]]; then
         echo "  # With Tailscale + NFS (recommended):"
         echo "  sudo ./scripts/install-gpu-vm.sh --mode worker \\"
         echo "      --main-node-ip ${TAILSCALE_IP} \\"
-        echo "      --tailscale-auth-key <your-auth-key> \\"
+        echo "      --swarm-token ${swarm_token} \\"
+        echo "      --tailscale-auth-key ${TAILSCALE_AUTH_KEY} \\"
         echo "      --enable-nfs"
         echo ""
         echo "  # Without Tailscale but with NFS:"
-        echo "  sudo ./scripts/install-gpu-vm.sh --mode worker --main-node-ip ${LOCAL_IP} --enable-nfs"
+        echo "  sudo ./scripts/install-gpu-vm.sh --mode worker --main-node-ip ${LOCAL_IP} --swarm-token ${swarm_token} --enable-nfs"
         echo ""
     elif [[ -n "$TAILSCALE_IP" ]]; then
         echo "  # With Tailscale (recommended - uses encrypted VPN mesh):"
         echo "  sudo ./scripts/install-gpu-vm.sh --mode worker \\"
         echo "      --main-node-ip ${TAILSCALE_IP} \\"
-        echo "      --tailscale-auth-key <your-auth-key>"
+        echo "      --swarm-token ${swarm_token} \\"
+        echo "      --tailscale-auth-key ${TAILSCALE_AUTH_KEY}"
         echo ""
         echo "  # Without Tailscale (requires firewall configuration):"
-        echo "  sudo ./scripts/install-gpu-vm.sh --mode worker --main-node-ip ${LOCAL_IP}"
+        echo "  sudo ./scripts/install-gpu-vm.sh --mode worker --main-node-ip ${LOCAL_IP} --swarm-token ${swarm_token}"
         echo ""
     elif [[ $NFS_ENABLED -eq 1 ]]; then
         echo "  # With NFS shared storage (recommended for multi-node):"
-        echo "  sudo ./scripts/install-gpu-vm.sh --mode worker --main-node-ip ${LOCAL_IP} --enable-nfs"
+        echo "  sudo ./scripts/install-gpu-vm.sh --mode worker --main-node-ip ${LOCAL_IP} --swarm-token ${swarm_token} --enable-nfs"
         echo ""
         echo "  # Without NFS (each node has local vfolders only):"
-        echo "  sudo ./scripts/install-gpu-vm.sh --mode worker --main-node-ip ${LOCAL_IP}"
+        echo "  sudo ./scripts/install-gpu-vm.sh --mode worker --main-node-ip ${LOCAL_IP} --swarm-token ${swarm_token}"
         echo ""
     else
-        echo "  sudo ./scripts/install-gpu-vm.sh --mode worker --main-node-ip ${LOCAL_IP}"
+        echo "  sudo ./scripts/install-gpu-vm.sh --mode worker --main-node-ip ${LOCAL_IP} --swarm-token ${swarm_token}"
         echo ""
     fi
     echo "${LWHITE}Required Firewall Ports (Inbound on Main Node):${NC}"
@@ -2806,6 +2840,11 @@ main() {
     install_docker
     add_user_to_docker_group
 
+    # Docker Swarm for multi-node overlay networks
+    # Must run after Docker install and Tailscale IP acquisition, but before B.AI config
+    show_step "Docker Swarm Setup"
+    setup_docker_swarm
+
     # Phase 3: GPU Runtime Setup
     show_step "Phase 3: GPU Runtime Setup"
     install_nvidia_container_toolkit
@@ -2896,12 +2935,6 @@ main() {
         # Phase 9: Pull Kernel Images
         show_step "Phase 9: Kernel Images"
         pull_kernel_images
-    fi
-
-    # Docker Swarm for multi-node sessions (if Tailscale enabled)
-    if [[ -n "$TAILSCALE_AUTH_KEY" ]]; then
-        show_step "Docker Swarm Setup"
-        setup_docker_swarm
     fi
 
     # Configure firewall for Tailscale (if enabled)
