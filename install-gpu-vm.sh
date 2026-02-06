@@ -953,6 +953,63 @@ install_tailscale() {
 # Firewall Configuration for Tailscale
 #######################################
 
+setup_docker_swarm() {
+    # Docker Swarm is required for multi-node sessions (overlay networks)
+    if [[ -z "$TAILSCALE_AUTH_KEY" ]]; then
+        return 0
+    fi
+
+    if [[ "$INSTALL_MODE" == "main" ]]; then
+        # Check if already in swarm mode
+        if docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null | grep -q "active"; then
+            show_info "Docker Swarm already initialized"
+        else
+            show_info "Initializing Docker Swarm for multi-node overlay networks..."
+            docker swarm init --advertise-addr "${LOCAL_IP}" || {
+                show_error "Failed to initialize Docker Swarm"
+                return 1
+            }
+            show_info "Docker Swarm initialized on main node"
+        fi
+
+        # Create the overlay network for Backend.AI multi-node sessions
+        if docker network ls --format '{{.Name}}' | grep -q "^backendai_overlay$"; then
+            show_info "Backend.AI overlay network already exists"
+        else
+            docker network create --driver overlay --attachable backendai_overlay || {
+                show_error "Failed to create overlay network"
+                return 1
+            }
+            show_info "Created Backend.AI overlay network"
+        fi
+
+        # Save the swarm join token for worker nodes
+        local join_token
+        join_token=$(docker swarm join-token -q worker)
+        echo "${join_token}" > "${INSTALL_PATH}/swarm-worker-token"
+        chmod 600 "${INSTALL_PATH}/swarm-worker-token"
+        show_info "Swarm worker join token saved to ${INSTALL_PATH}/swarm-worker-token"
+        show_note "Worker nodes will need: docker swarm join --token ${join_token} ${LOCAL_IP}:2377"
+
+    elif [[ "$INSTALL_MODE" == "worker" ]]; then
+        # Check if already in swarm
+        if docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null | grep -q "active"; then
+            show_info "Already joined Docker Swarm"
+            return 0
+        fi
+
+        # Try to join the swarm on the main node
+        show_info "Joining Docker Swarm on main node ${MAIN_NODE_IP}..."
+        docker swarm join --token "$(ssh -o StrictHostKeyChecking=no "${MAIN_NODE_IP}" cat "${INSTALL_PATH}/swarm-worker-token" 2>/dev/null)" "${MAIN_NODE_IP}:2377" 2>/dev/null || {
+            show_warning "Could not auto-join Docker Swarm. Please manually join with:"
+            show_warning "  docker swarm join --token <TOKEN> ${MAIN_NODE_IP}:2377"
+            show_warning "Get the token on the main node with: docker swarm join-token worker"
+            return 0
+        }
+        show_info "Joined Docker Swarm successfully"
+    fi
+}
+
 configure_tailscale_firewall() {
     # Only configure if Tailscale is being used
     if [[ -z "$TAILSCALE_AUTH_KEY" ]]; then
@@ -987,6 +1044,11 @@ configure_tailscale_firewall() {
         ufw allow from "$tailscale_network" to any port "${APPPROXY_WORKER_PORT}" comment "Backend.AI App-Proxy Worker"
         ufw allow from "$tailscale_network" to any port 9000 comment "Backend.AI MinIO"
 
+        # Docker Swarm ports for multi-node sessions
+        ufw allow from "$tailscale_network" to any port 2377 proto tcp comment "Docker Swarm Management"
+        ufw allow from "$tailscale_network" to any port 7946 comment "Docker Swarm Node Communication"
+        ufw allow from "$tailscale_network" to any port 4789 proto udp comment "Docker Swarm Overlay Network"
+
         # Allow Docker networks to access Manager (for Apollo Router GraphQL)
         # Docker uses 172.16.0.0/12 range for bridge networks (172.17.x default, 172.18.x+ for compose)
         ufw allow from 172.16.0.0/12 to any port "${MANAGER_PORT}" comment "Backend.AI Manager from Docker"
@@ -1005,6 +1067,11 @@ configure_tailscale_firewall() {
         ufw allow from "$tailscale_network" to any port 6003 comment "Backend.AI Agent Service"
         # Container port range
         ufw allow from "$tailscale_network" to any port 30000:31000 proto tcp comment "Backend.AI Containers"
+
+        # Docker Swarm ports for multi-node sessions
+        ufw allow from "$tailscale_network" to any port 2377 proto tcp comment "Docker Swarm Management"
+        ufw allow from "$tailscale_network" to any port 7946 comment "Docker Swarm Node Communication"
+        ufw allow from "$tailscale_network" to any port 4789 proto udp comment "Docker Swarm Overlay Network"
     fi
 
     # Always allow SSH
@@ -1802,11 +1869,16 @@ configure_agent() {
     # For main node, bind RPC to 0.0.0.0 for external access if needed
     sed -i 's/rpc-listen-addr = { host = "127.0.0.1"/rpc-listen-addr = { host = "0.0.0.0"/' agent.toml
 
-    # Set advertised-rpc-addr for main node (manager is local, use 127.0.0.1)
+    # Set advertised-rpc-addr for main node
+    # Use LOCAL_IP (Tailscale IP when enabled) so app-proxy can reach the agent
+    local main_agent_addr="127.0.0.1"
+    if [[ -n "$TAILSCALE_AUTH_KEY" ]]; then
+        main_agent_addr="${LOCAL_IP}"
+    fi
     if ! grep -q "^advertised-rpc-addr" agent.toml; then
-        sed -i "/rpc-listen-addr = /a advertised-rpc-addr = { host = \"127.0.0.1\", port = ${AGENT_RPC_PORT} }" agent.toml
+        sed -i "/rpc-listen-addr = /a advertised-rpc-addr = { host = \"${main_agent_addr}\", port = ${AGENT_RPC_PORT} }" agent.toml
     else
-        sed -i "s/.*advertised-rpc-addr = .*/advertised-rpc-addr = { host = \"127.0.0.1\", port = ${AGENT_RPC_PORT} }/" agent.toml
+        sed -i "s/.*advertised-rpc-addr = .*/advertised-rpc-addr = { host = \"${main_agent_addr}\", port = ${AGENT_RPC_PORT} }/" agent.toml
     fi
 
     # Create necessary directories
@@ -1870,8 +1942,8 @@ configure_worker_agent() {
     # Enable CUDA plugin
     sed -i 's/# allow-compute-plugins =.*/allow-compute-plugins = ["ai.backend.accelerator.cuda_open"]/' agent.toml
 
-    # Update container binding to allow external access
-    sed -i 's/bind-host = "127.0.0.1"/bind-host = "0.0.0.0"/' agent.toml
+    # Update container binding - use Tailscale IP so app-proxy on main node can reach kernel containers
+    sed -i "s/bind-host = \"127.0.0.1\"/bind-host = \"${LOCAL_IP}\"/" agent.toml
 
     # Set cohabiting-storage-proxy to false (storage proxy is on main node)
     sed -i 's/cohabiting-storage-proxy = true/cohabiting-storage-proxy = false/' agent.toml
@@ -2824,6 +2896,12 @@ main() {
         # Phase 9: Pull Kernel Images
         show_step "Phase 9: Kernel Images"
         pull_kernel_images
+    fi
+
+    # Docker Swarm for multi-node sessions (if Tailscale enabled)
+    if [[ -n "$TAILSCALE_AUTH_KEY" ]]; then
+        show_step "Docker Swarm Setup"
+        setup_docker_swarm
     fi
 
     # Configure firewall for Tailscale (if enabled)
