@@ -1021,7 +1021,7 @@ setup_docker_swarm() {
         # Save the swarm join token for worker nodes
         local join_token
         join_token=$(docker swarm join-token -q worker)
-        mkdir -p "${INSTALL_PATH}"
+        sudo mkdir -p "${INSTALL_PATH}"
         echo "${join_token}" > "${INSTALL_PATH}/swarm-worker-token"
         chmod 600 "${INSTALL_PATH}/swarm-worker-token"
         show_info "Swarm worker join token saved to ${INSTALL_PATH}/swarm-worker-token"
