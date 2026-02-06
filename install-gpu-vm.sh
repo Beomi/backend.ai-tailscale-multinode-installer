@@ -977,10 +977,21 @@ install_tailscale() {
 setup_docker_swarm() {
     # Docker Swarm is required for multi-node sessions (overlay networks)
     if [[ "$INSTALL_MODE" == "main" ]]; then
-        # Check if already in swarm mode
-        if docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null | grep -q "active"; then
-            show_info "Docker Swarm already initialized"
+        # Check current swarm state
+        local swarm_state
+        swarm_state=$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null)
+        local is_manager
+        is_manager=$(docker info --format '{{.Swarm.ControlAvailable}}' 2>/dev/null)
+
+        if [[ "$swarm_state" == "active" ]] && [[ "$is_manager" == "true" ]]; then
+            show_info "Docker Swarm already initialized (this node is a manager)"
         else
+            # Leave stale swarm if node is active but not a manager
+            if [[ "$swarm_state" == "active" ]]; then
+                show_warning "Node is in a swarm but not a manager. Leaving stale swarm..."
+                docker swarm leave --force 2>/dev/null || true
+            fi
+
             show_info "Initializing Docker Swarm for multi-node overlay networks..."
             if [[ -n "$TAILSCALE_IP" ]]; then
                 docker swarm init --advertise-addr "${TAILSCALE_IP}" || {
