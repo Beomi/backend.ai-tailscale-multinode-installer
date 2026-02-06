@@ -1964,6 +1964,9 @@ configure_appproxy() {
     sed -i "s/jwt_secret = \"some_jwt_secret\"/jwt_secret = \"${APPPROXY_JWT_SECRET}\"/" app-proxy-coordinator.toml
     sed -i "s/secret = \"some_permit_hash_secret\"/secret = \"${APPPROXY_PERMIT_HASH_SECRET}\"/" app-proxy-coordinator.toml
 
+    # Set advertised_addr to LOCAL_IP so browsers can reach the app-proxy
+    sed -i '/\[proxy_coordinator\.advertised_addr\]/,/^host = /{s/host = "127.0.0.1"/host = "'"${LOCAL_IP}"'"/}' app-proxy-coordinator.toml
+
     # Copy alembic config for app-proxy
     cp configs/app-proxy-coordinator/halfstack.alembic.ini alembic-appproxy.ini
     sed -i "s/localhost:8100/localhost:${POSTGRES_PORT}/" alembic-appproxy.ini
